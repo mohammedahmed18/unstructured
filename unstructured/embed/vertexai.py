@@ -52,7 +52,8 @@ class VertexAIEmbeddingEncoder(BaseEmbeddingEncoder):
 
     def num_of_dimensions(self):
         exemplary_embedding = self.get_exemplary_embedding()
-        return np.shape(exemplary_embedding)
+        # Avoid redundant np.shape: if exemplary_embedding is a list, np.asarray is cheap
+        return np.asarray(exemplary_embedding).shape
 
     def is_unit_vector(self):
         exemplary_embedding = self.get_exemplary_embedding()
