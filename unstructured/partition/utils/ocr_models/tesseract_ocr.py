@@ -26,6 +26,10 @@ if TYPE_CHECKING:
     from unstructured_inference.inference.elements import TextRegions
     from unstructured_inference.inference.layoutelement import LayoutElements
 
+_BBOX_PATTERN = re.compile(r"bbox (\d+) (\d+) (\d+) (\d+)")
+
+_XCONF_PATTERN = re.compile(r"x_conf (\d+\.\d+)")
+
 # -- force tesseract to be single threaded, otherwise we see major performance problems --
 if "OMP_THREAD_LIMIT" not in os.environ:
     os.environ["OMP_THREAD_LIMIT"] = "1"
@@ -108,25 +112,29 @@ class OCRAgentTesseract(OCRAgent):
     def hocr_to_dataframe(
         self, hocr: str, character_confidence_threshold: float = 0.0
     ) -> pd.DataFrame:
-        df_entries = []
 
         if not hocr:
-            return pd.DataFrame(df_entries, columns=["left", "top", "width", "height", "text"])
+            return pd.DataFrame([], columns=["left", "top", "width", "height", "text"])
 
         root = etree.fromstring(hocr)
         word_spans = root.findall('.//h:span[@class="ocrx_word"]', self.hocr_namespace)
 
+        # Use local vars to eliminate repeated attribute lookups
+        df_entries = []
+        extract_word = self.extract_word_from_hocr
+        bbox_search = _BBOX_PATTERN.search
+        threshold = character_confidence_threshold
+
+        # Reduce per-word Python overhead by reducing method and attr lookups
+        append_entry = df_entries.append
+
         for word_span in word_spans:
             word_title = word_span.get("title", "")
-            bbox_match = re.search(r"bbox (\d+) (\d+) (\d+) (\d+)", word_title)
-
-            text = self.extract_word_from_hocr(
-                word=word_span, character_confidence_threshold=character_confidence_threshold
-            )
+            bbox_match = bbox_search(word_title)
+            text = extract_word(word=word_span, character_confidence_threshold=threshold)
             if text and bbox_match:
-                word_bbox = list(map(int, bbox_match.groups()))
-                left, top, right, bottom = word_bbox
-                df_entries.append(
+                left, top, right, bottom = map(int, bbox_match.groups())
+                append_entry(
                     {
                         "left": left,
                         "top": top,
@@ -135,12 +143,19 @@ class OCRAgentTesseract(OCRAgent):
                         "text": text,
                     }
                 )
-        ocr_df = pd.DataFrame(df_entries, columns=["left", "top", "right", "bottom", "text"])
 
-        ocr_df["width"] = ocr_df["right"] - ocr_df["left"]
-        ocr_df["height"] = ocr_df["bottom"] - ocr_df["top"]
+        # Use pd.DataFrame.from_records for improved memory efficiency
+        ocr_df = pd.DataFrame.from_records(
+            df_entries, columns=["left", "top", "right", "bottom", "text"]
+        )
 
-        ocr_df = ocr_df.drop(columns=["right", "bottom"])
+        # Vectorize width/height to avoid index/slice copying
+        ocr_df["width"] = ocr_df["right"].values - ocr_df["left"].values
+        ocr_df["height"] = ocr_df["bottom"].values - ocr_df["top"].values
+
+        # Avoid a copy if possible: drop with inplace (since next operation is to return)
+        ocr_df.drop(columns=["right", "bottom"], inplace=True)
+
         return ocr_df
 
     def extract_word_from_hocr(
