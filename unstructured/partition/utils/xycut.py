@@ -205,16 +205,29 @@ def recursive_xy_cut_swapped(boxes: np.ndarray, indices: np.ndarray, res: List[i
 def points_to_bbox(points):
     assert len(points) == 8
 
-    # [x1,y1,x2,y2,x3,y3,x4,y4]
-    left = min(points[::2])
-    right = max(points[::2])
-    top = min(points[1::2])
-    bottom = max(points[1::2])
+    it = iter(points)
+    left = right = next(it)
+    top = bottom = next(it)
 
-    left = max(left, 0)
-    top = max(top, 0)
-    right = max(right, 0)
-    bottom = max(bottom, 0)
+    for x in it:
+        y = next(it)
+        if x < left:
+            left = x
+        elif x > right:
+            right = x
+        if y < top:
+            top = y
+        elif y > bottom:
+            bottom = y
+
+    if left < 0:
+        left = 0
+    if top < 0:
+        top = 0
+    if right < 0:
+        right = 0
+    if bottom < 0:
+        bottom = 0
     return [left, top, right, bottom]
 
 
