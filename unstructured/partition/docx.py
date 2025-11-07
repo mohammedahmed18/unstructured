@@ -793,8 +793,19 @@ class _DocxPartitioner:
 
     def _paragraph_emphasis(self, paragraph: Paragraph) -> tuple[list[str], list[str]]:
         """[contents, tags] pair describing emphasized text in `paragraph`."""
-        iter_p_emph, iter_p_emph_2 = itertools.tee(self._iter_paragraph_emphasis(paragraph))
-        return ([e["text"] for e in iter_p_emph], [e["tag"] for e in iter_p_emph_2])
+        texts: list[str] = []
+        tags: list[str] = []
+        for run in paragraph.runs:
+            text = run.text.strip() if run.text else ""
+            if not text:
+                continue
+            if run.bold:
+                texts.append(text)
+                tags.append("b")
+            if run.italic:
+                texts.append(text)
+                tags.append("i")
+        return texts, tags
 
     def _paragraph_link_meta(self, paragraph: Paragraph) -> tuple[list[str], list[str], list[Link]]:
         """Describes hyperlinks in `paragraph`, if any."""
