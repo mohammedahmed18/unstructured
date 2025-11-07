@@ -99,10 +99,6 @@ def _convert_to_frequency_without_depth(d: FrequencyDict) -> dict[str, int]:
     and converts to dictionary without depth of format type: value
     """
     res: dict[str, int] = {}
-    for k, v in d.items():
-        element_type = k[0]
-        if element_type not in res:
-            res[element_type] = v
-        else:
-            res[element_type] += v
+    for (element_type, _), v in d.items():
+        res[element_type] = res.get(element_type, 0) + v
     return res
