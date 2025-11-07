@@ -33,10 +33,7 @@ def get_element_type_frequency(
         type = element.get("type")
         category_depth = element["metadata"].get("category_depth")
         key = (type, category_depth)
-        if key not in frequency:
-            frequency[key] = 1
-        else:
-            frequency[key] += 1
+        frequency[key] = frequency.get(key, 0) + 1
     return frequency
 
 
