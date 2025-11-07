@@ -664,28 +664,57 @@ class _DocxPartitioner:
         See `._iter_section_footers()` docstring for more on docx headers and footers.
         """
 
-        def maybe_iter_header(header: _Header, header_footer_type: str) -> Iterator[Header]:
-            """Generate zero-or-one Header elements for `header`."""
-            if header.is_linked_to_previous:
-                return
+        # Inline body to avoid closure overhead and extra function calls
+        header = section.header
+        if not header.is_linked_to_previous:
             text = self._header_footer_text(header)
-            if not text:
-                return
-            yield Header(
-                text=text,
-                detection_origin=DETECTION_ORIGIN,
-                metadata=ElementMetadata(
-                    filename=self._opts.metadata_file_path,
-                    header_footer_type=header_footer_type,
-                    category_depth=0,  # -- headers are always at the root level}
-                ),
-            )
+            if text:
+                yield Header(
+                    text=text,
+                    detection_origin=DETECTION_ORIGIN,
+                    metadata=ElementMetadata(
+                        filename=self._opts.metadata_file_path,
+                        header_footer_type="primary",
+                        category_depth=0,  # -- headers are always at the root level}
+                    ),
+                )
 
-        yield from maybe_iter_header(section.header, "primary")
-        if section.different_first_page_header_footer:
-            yield from maybe_iter_header(section.first_page_header, "first_page")
-        if self._document.settings.odd_and_even_pages_header_footer:
-            yield from maybe_iter_header(section.even_page_header, "even_page")
+        # Cache different_first_page_header_footer flag since used multiple times
+        diff_first_page = section.different_first_page_header_footer
+
+        if diff_first_page:
+            first_page_header = section.first_page_header
+            if not first_page_header.is_linked_to_previous:
+                text = self._header_footer_text(first_page_header)
+                if text:
+                    yield Header(
+                        text=text,
+                        detection_origin=DETECTION_ORIGIN,
+                        metadata=ElementMetadata(
+                            filename=self._opts.metadata_file_path,
+                            header_footer_type="first_page",
+                            category_depth=0,
+                        ),
+                    )
+
+        # Cache settings property and odd/even pages flag
+        document_settings = self._document.settings
+        odd_even_pages = document_settings.odd_and_even_pages_header_footer
+
+        if odd_even_pages:
+            even_page_header = section.even_page_header
+            if not even_page_header.is_linked_to_previous:
+                text = self._header_footer_text(even_page_header)
+                if text:
+                    yield Header(
+                        text=text,
+                        detection_origin=DETECTION_ORIGIN,
+                        metadata=ElementMetadata(
+                            filename=self._opts.metadata_file_path,
+                            header_footer_type="even_page",
+                            category_depth=0,
+                        ),
+                    )
 
     def _iter_section_page_breaks(self, section_idx: int, section: Section) -> Iterator[PageBreak]:
         """Generate zero-or-one `PageBreak` document elements for `section`.
