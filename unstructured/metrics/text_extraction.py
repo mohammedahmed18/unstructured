@@ -79,31 +79,30 @@ def bag_of_words(text: str) -> Dict[str, int]:
 
     Removes sentence punctuation, but not punctuation within a word (ex. apostrophes).
     """
-    bow: Dict[str, int] = {}
-    incorrect_word: str = ""
+    # Preprocess and split words as early as possible
     words = clean_bullets(remove_sentence_punctuation(text.lower(), ["-", "'"])).split()
+    bow: Dict[str, int] = {}
 
     i = 0
-    while i < len(words):
-        if len(words[i]) > 1:
-            if words[i] in bow:
-                bow[words[i]] += 1
-            else:
-                bow[words[i]] = 1
+    len_words = len(words)
+    while i < len_words:
+        word = words[i]
+        word_len = len(word)
+        if word_len > 1:
+            # Use setdefault to avoid extra dict lookup
+            bow[word] = bow.get(word, 0) + 1
             i += 1
         else:
             j = i
-            incorrect_word = ""
-
-            while j < len(words) and len(words[j]) == 1:
-                incorrect_word += words[j]
+            # Use a list and join instead of string concatenation in a loop
+            single_chars = []
+            while j < len_words and len(words[j]) == 1:
+                single_chars.append(words[j])
                 j += 1
-
-            if len(incorrect_word) == 1 and words[i].isalnum():
-                if incorrect_word in bow:
-                    bow[incorrect_word] += 1
-                else:
-                    bow[incorrect_word] = 1
+            incorrect_word = "".join(single_chars)
+            # The 'spaced out word' should not be counted, only allow single isolated alphanum
+            if len(incorrect_word) == 1 and word.isalnum():
+                bow[incorrect_word] = bow.get(incorrect_word, 0) + 1
             i = j
     return bow
 
@@ -133,18 +132,14 @@ def calculate_percent_missing_text(
     output_bow = bag_of_words(output)
     source_bow = bag_of_words(source)
 
-    # get total words in source bow while counting missing words
-    total_source_word_count = 0
+    # Compute sums using generator expressions for improved performance and clarity
+    total_source_word_count = sum(source_bow.values())
     total_missing_word_count = 0
 
     for source_word, source_count in source_bow.items():
-        total_source_word_count += source_count
-        if source_word not in output_bow:
-            # entire count is missing
-            total_missing_word_count += source_count
-        else:
-            output_count = output_bow[source_word]
-            total_missing_word_count += max(source_count - output_count, 0)
+        output_count = output_bow.get(source_word, 0)
+        if output_count < source_count:
+            total_missing_word_count += source_count - output_count
 
     # calculate percent missing text
     if total_source_word_count == 0:
