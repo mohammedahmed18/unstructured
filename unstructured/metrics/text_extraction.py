@@ -223,17 +223,53 @@ def standardize_quotes(text: str) -> str:
     double_quote_standard = '"'
     single_quote_standard = "'"
 
-    # Apply double quote replacements
-    for unicode_val in double_quotes.values():
-        unicode_char = unicode_to_char(unicode_val)
-        if unicode_char in text:
-            text = text.replace(unicode_char, double_quote_standard)
+    def _fast_unicode_to_char(unicode_val: str) -> str:
+        # Assumes input is always of the form U+XXXX or U+XXXXX -- saves checks and function calls
+        return chr(int(unicode_val[2:], 16))
 
-    # Apply single quote replacements
-    for unicode_val in single_quotes.values():
-        unicode_char = unicode_to_char(unicode_val)
-        if unicode_char in text:
-            text = text.replace(unicode_char, single_quote_standard)
+    # Prepare translation maps only once
+    def _get_quote_translation_maps():
+        dq_map = {}
+        sq_map = {}
+
+        # Double quotes
+        seen = set()
+        for k, v in double_quotes.items():
+            uc = _fast_unicode_to_char(v)
+            # Support all candidate marks, but prevent overwriting multichar keys like ",,"
+            if len(k) == 1:
+                if uc not in seen:
+                    dq_map[uc] = double_quote_standard
+                    seen.add(uc)
+            else:
+                dq_map[k] = double_quote_standard  # multichar patterns (like ",,")
+        # Single quotes
+        seen.clear()
+        for k, v in single_quotes.items():
+            uc = _fast_unicode_to_char(v)
+            if len(k) == 1:
+                if uc not in seen:
+                    sq_map[uc] = single_quote_standard
+                    seen.add(uc)
+            else:
+                sq_map[k] = single_quote_standard
+        return dq_map, sq_map
+
+    # Cache translation maps on function object to avoid recomputation
+    if not hasattr(standardize_quotes, "_translation_maps"):
+        standardize_quotes._translation_maps = _get_quote_translation_maps()
+    dq_map, sq_map = standardize_quotes._translation_maps
+
+    # Since dict keys may overlap, always replace longer substrings first to avoid premature replacement
+    def _replace_quotes(txt: str, mapping: dict) -> str:
+        # Sort keys: longest first to avoid e.g. ,, being changed after single comma
+        for unicode_char in sorted(mapping, key=len, reverse=True):
+            if unicode_char in txt:
+                txt = txt.replace(unicode_char, mapping[unicode_char])
+        return txt
+
+    text = _replace_quotes(text, dq_map)
+    text = _replace_quotes(text, sq_map)
 
     return text
 
