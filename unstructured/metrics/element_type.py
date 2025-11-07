@@ -53,43 +53,57 @@ def calculate_element_type_percent_match(
     """
     if len(output) == 0 or len(source) == 0:
         return 0.0
-
-    output_copy = output.copy()
-    source_copy = source.copy()
     total_source_element_count = 0
     total_match_element_count = 0
 
     unmatched_depth_output: dict[str, int] = {}
     unmatched_depth_source: dict[str, int] = {}
 
-    # loop through the output list to find match with source
-    for k, _ in output_copy.items():
-        if k in source_copy:
-            match_count = min(output_copy[k], source_copy[k])
+    # Track which items remain unmatched after exact matching
+    source_remaining = source.copy()
+    output_remaining = output.copy()
+
+    # Fast path: do all exact matches, updating element-level remainders for outputs
+    for k, out_count in output.items():
+        src_count = source.get(k, 0)
+        if src_count:
+            match_count = min(out_count, src_count)
             total_match_element_count += match_count
             total_source_element_count += match_count
 
-            # update the dictionary by removing already matched values
-            output_copy[k] -= match_count
-            source_copy[k] -= match_count
+            rem_output = out_count - match_count
+            rem_source = src_count - match_count
 
-        # add unmatched leftovers from output_copy to a new dictionary
-        element_type = k[0]
-        if element_type not in unmatched_depth_output:
-            unmatched_depth_output[element_type] = output_copy[k]
+            if rem_output > 0:
+                etype = k[0]
+                unmatched_depth_output[etype] = unmatched_depth_output.get(etype, 0) + rem_output
+                output_remaining[k] = rem_output
+            else:
+                output_remaining.pop(k, None)
+
+            if rem_source > 0:
+                source_remaining[k] = rem_source
+            else:
+                source_remaining.pop(k, None)
         else:
-            unmatched_depth_output[element_type] += output_copy[k]
+            etype = k[0]
+            unmatched_depth_output[etype] = unmatched_depth_output.get(etype, 0) + out_count
 
-    # add unmatched leftovers from source_copy to a new dictionary
-    unmatched_depth_source = _convert_to_frequency_without_depth(source_copy)
+    # Now, collect unmatched leftovers from source_remaining, summed by element type
+    unmatched_depth_source = _convert_to_frequency_without_depth(source_remaining)
 
-    # loop through the source list to match any existing partial match left
-    for k, _ in unmatched_depth_source.items():
-        total_source_element_count += unmatched_depth_source[k]
-        if k in unmatched_depth_output:
-            match_count = min(unmatched_depth_output[k], unmatched_depth_source[k])
+    # Add up the remaining total for normalization
+    total_source_element_count += sum(unmatched_depth_source.values())
+
+    # Partial matches weighted
+    for etype, src_val in unmatched_depth_source.items():
+        if etype in unmatched_depth_output:
+            match_count = min(unmatched_depth_output[etype], src_val)
             total_match_element_count += match_count * category_depth_weight
 
+    # Prevent division by zero, clamp result in [0, 1]
+    if total_source_element_count == 0:
+        return 0.0
     return min(max(total_match_element_count / total_source_element_count, 0.0), 1.0)
 
 
@@ -99,10 +113,6 @@ def _convert_to_frequency_without_depth(d: FrequencyDict) -> dict[str, int]:
     and converts to dictionary without depth of format type: value
     """
     res: dict[str, int] = {}
-    for k, v in d.items():
-        element_type = k[0]
-        if element_type not in res:
-            res[element_type] = v
-        else:
-            res[element_type] += v
+    for (element_type, _), v in d.items():
+        res[element_type] = res.get(element_type, 0) + v
     return res
