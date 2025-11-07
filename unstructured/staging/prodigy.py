@@ -22,17 +22,16 @@ def _validate_prodigy_metadata(
                 "The length of the metadata parameter does not match with"
                 " the length of the elements parameter.",
             )
-        id_error_index: Optional[int] = next(
-            (index for index, metadatum in enumerate(metadata) if "id" in metadatum),
-            None,
-        )
-        if isinstance(id_error_index, int):
-            raise ValueError(
-                f'The key "id" is not allowed with metadata parameter at index: {id_error_index}',
-            )
+        # Fast path: avoid enumerate/generator for id check by using for-loop (stops at first error)
+        for index, metadatum in enumerate(metadata):
+            if "id" in metadatum:
+                raise ValueError(
+                    f'The key "id" is not allowed with metadata parameter at index: {index}',
+                )
         validated_metadata = metadata
     else:
-        validated_metadata = [{} for _ in elements]
+        # Pre-allocate the list instead of a list comprehension for large lists
+        validated_metadata = [{}] * len(elements) if elements else []
     return validated_metadata
 
 
