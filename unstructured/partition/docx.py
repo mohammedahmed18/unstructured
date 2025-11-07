@@ -557,7 +557,8 @@ class _DocxPartitioner:
         if is_bulleted_text(paragraph.text):
             return True
 
-        return "<w:numPr>" in paragraph._p.xml
+        paragraph_xml = paragraph._p.xml
+        return "<w:numPr>" in paragraph_xml
 
     def _iter_paragraph_elements(self, paragraph: Paragraph) -> Iterator[Element]:
         """Generate zero-or-more document elements for `paragraph`.

@@ -19,6 +19,8 @@ from unstructured.nlp.patterns import (
 )
 from unstructured.nlp.tokenize import pos_tag, sent_tokenize, word_tokenize
 
+_MATCH_UNICODE_BULLETS = UNICODE_BULLETS_RE.match
+
 POS_VERB_TAGS: Final[List[str]] = ["VB", "VBG", "VBD", "VBN", "VBP", "VBZ"]
 ENGLISH_WORD_SPLIT_RE = re.compile(r"[\s\-,.!?_\/]+")
 NON_LOWERCASE_ALPHA_RE = re.compile(r"[^a-z]")
@@ -164,7 +166,7 @@ def is_possible_title(
 
 def is_bulleted_text(text: str) -> bool:
     """Checks to see if the section of text is part of a bulleted list."""
-    return UNICODE_BULLETS_RE.match(text.strip()) is not None
+    return _MATCH_UNICODE_BULLETS(text.strip()) is not None
 
 
 def contains_us_phone_number(text: str) -> bool:
