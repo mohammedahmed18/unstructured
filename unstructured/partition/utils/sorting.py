@@ -27,8 +27,7 @@ def coordinates_to_bbox(coordinates: CoordinatesMetadata) -> tuple[int, int, int
     """
 
     points = coordinates.points
-    left, top = points[0]
-    right, bottom = points[2]
+    (left, top), (right, bottom) = points[0], points[2]
     return int(left), int(top), int(right), int(bottom)
 
 

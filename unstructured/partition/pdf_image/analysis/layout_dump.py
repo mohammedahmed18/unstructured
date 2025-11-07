@@ -130,13 +130,13 @@ class OCRLayoutDumper(LayoutDumper):
 
 
 def _extract_final_element_info(element: Element) -> dict:
-    element_type = (
-        element.category if isinstance(element, Text) else str(element.__class__.__name__)
-    )
-    element_prob = getattr(element.metadata, "detection_class_prob", None)
+    metadata = element.metadata  # Cache to local variable for faster repeated access
+    # Direct type comparison is faster than isinstance when no inheritance tree is expected
+    element_type = element.category if type(element) is Text else str(element.__class__.__name__)
+    element_prob = getattr(metadata, "detection_class_prob", None)
     text = element.text
-    bbox_points = coordinates_to_bbox(element.metadata.coordinates)
-    cluster = getattr(element.metadata, "cluster", None)
+    bbox_points = coordinates_to_bbox(metadata.coordinates)
+    cluster = getattr(metadata, "cluster", None)
     return {
         "type": element_type,
         "prob": element_prob,
