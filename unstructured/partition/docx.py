@@ -13,8 +13,6 @@ from typing import IO, Any, Iterator, Protocol, Type
 import docx
 from docx.document import Document
 from docx.enum.section import WD_SECTION_START
-from docx.oxml.table import CT_Tbl
-from docx.oxml.text.paragraph import CT_P
 from docx.section import Section, _Footer, _Header
 from docx.table import Table as DocxTable
 from docx.table import _Cell, _Row
@@ -346,44 +344,44 @@ class _DocxPartitioner:
     def iter_document_elements(cls, opts: DocxPartitionerOptions) -> Iterator[Element]:
         """Partition MS Word documents (.docx format) into its document elements."""
         self = cls(opts)
-        # NOTE(scanny): It's possible for a Word document to have no sections. In particular, a
-        # Microsoft Teams chat transcript exported to DOCX contains no sections. Such a
-        # "section-less" document has to be interated differently and has no headers or footers and
-        # therefore no page-size or margins.
-        return (
-            self._iter_document_elements()
-            if self._document_contains_sections
-            else self._iter_sectionless_document_elements()
-        )
+        # Combine property and check for sections only once (_document_contains_sections is lazyproperty)
+        if self._document_contains_sections:
+            return self._iter_document_elements()
+        else:
+            return self._iter_sectionless_document_elements()
 
     def _iter_document_elements(self) -> Iterator[Element]:
         """Generate each document-element in (docx) `document` in document order."""
-        # -- This implementation composes a collection of iterators into a "combined" iterator
-        # -- return value using `yield from`. You can think of the return value as an Element
-        # -- stream and each `yield from` as "add elements found by this function to the stream".
-        # -- This is functionally analogous to declaring `elements: list[Element] = []` at the top
-        # -- and using `elements.extend()` for the results of each of the function calls, but is
-        # -- more perfomant, uses less memory (avoids producing and then garbage-collecting all
-        # -- those small lists), is more flexible for later iterator operations like filter,
-        # -- chain, map, etc. and is perhaps more elegant and simpler to read once you have the
-        # -- concept of what it's doing. You can see the same pattern repeating in the "sub"
-        # -- functions like `._iter_paragraph_elements()` where the "just return when done"
-        # -- characteristic of a generator avoids repeated code to form interim results into lists.
-        for section_idx, section in enumerate(self._document.sections):
-            yield from self._iter_section_page_breaks(section_idx, section)
-            yield from self._iter_section_headers(section)
+        # Avoid repeated attribute lookup
+        document_sections = self._document.sections
+        iter_section_headers = self._iter_section_headers
+        iter_section_footers = self._iter_section_footers
+        iter_section_page_breaks = self._iter_section_page_breaks
+        iter_paragraph_elements = self._iter_paragraph_elements
+        iter_table_element = self._iter_table_element
+
+        # Localize Paragraph and DocxTable to avoid global lookups in a tight loop
+        Paragraph_ = Paragraph
+        DocxTable_ = DocxTable
+
+        for section_idx, section in enumerate(document_sections):
+            yield from iter_section_page_breaks(section_idx, section)
+            yield from iter_section_headers(section)
+
+            # Prefetch block items as list if section.iter_inner_content is not already a generator
+            # but we do not know that so we just use it directly, but localize methods above
 
             for block_item in section.iter_inner_content():
                 # -- a block-item can be a Paragraph or a Table, maybe others later so elif here.
                 # -- Paragraph is more common so check that first.
-                if isinstance(block_item, Paragraph):
-                    yield from self._iter_paragraph_elements(block_item)
-                elif isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
-                    block_item, DocxTable
-                ):
-                    yield from self._iter_table_element(block_item)
+                if isinstance(block_item, Paragraph_):
+                    yield from iter_paragraph_elements(block_item)
+                elif isinstance(
+                    block_item, DocxTable_
+                ):  # pyright: ignore[reportUnnecessaryIsInstance]
+                    yield from iter_table_element(block_item)
 
-            yield from self._iter_section_footers(section)
+            yield from iter_section_footers(section)
 
     def _iter_sectionless_document_elements(self) -> Iterator[Element]:
         """Generate each document-element in a docx `document` that has no sections.
@@ -391,12 +389,18 @@ class _DocxPartitioner:
         A "section-less" DOCX must be iterated differently. Also it will have no headers or footers
         (because those live in a section).
         """
-        for block_item in self._document.iter_inner_content():
-            if isinstance(block_item, Paragraph):
-                yield from self._iter_paragraph_elements(block_item)
+        document_content = self._document.iter_inner_content
+        iter_paragraph_elements = self._iter_paragraph_elements
+        iter_table_element = self._iter_table_element
+
+        Paragraph_ = Paragraph
+        DocxTable_ = DocxTable
+        for block_item in document_content():
+            if isinstance(block_item, Paragraph_):
+                yield from iter_paragraph_elements(block_item)
             # -- can only be a Paragraph or Table so far but more types may come later --
-            elif isinstance(block_item, DocxTable):  # pyright: ignore[reportUnnecessaryIsInstance]
-                yield from self._iter_table_element(block_item)
+            elif isinstance(block_item, DocxTable_):  # pyright: ignore[reportUnnecessaryIsInstance]
+                yield from iter_table_element(block_item)
 
     def _classify_paragraph_to_element(self, paragraph: Paragraph) -> Iterator[Element]:
         """Generate zero-or-one document element for `paragraph`.
