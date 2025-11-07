@@ -858,13 +858,16 @@ class _DocxPartitioner:
     def _parse_category_depth_by_style(self, paragraph: Paragraph) -> int:
         """Determine category depth from paragraph metadata"""
 
-        # Determine category depth from paragraph ilvl xpath
-        xpath = paragraph._element.xpath("./w:pPr/w:numPr/w:ilvl/@w:val")
+        # Avoid attribute, function, and list lookups inside tight loops
+        elem = paragraph._element
+        xpath = elem.xpath("./w:pPr/w:numPr/w:ilvl/@w:val")
         if xpath:
             return round(float(xpath[0]))
 
-        # Determine category depth from style name
-        style_name = (paragraph.style and paragraph.style.name) or "Normal"
+        # Avoid attribute lookup and logical ops inside the loop
+        style = paragraph.style
+        style_name = style.name if style is not None else "Normal"
+
         depth = self._parse_category_depth_by_style_name(style_name)
 
         if depth > 0:
@@ -883,22 +886,30 @@ class _DocxPartitioner:
         Category depth is 0-indexed and relative to the other element types in the document.
         """
 
-        def _extract_number(suffix: str) -> int:
-            return int(suffix.split()[-1]) - 1 if suffix.split()[-1].isdigit() else 0
-
         # Heading styles
         if style_name.startswith("Heading"):
-            return _extract_number(style_name)
+            # Assumes suffix is "Heading X"
+            end_num = style_name[7:].strip()
+            if end_num.isdigit():
+                return int(end_num) - 1
+            return 0
 
         if style_name == "Subtitle":
             return 1
 
-        # List styles
-        list_prefixes = ["List", "List Bullet", "List Continue", "List Number"]
-        if any(style_name.startswith(prefix) for prefix in list_prefixes):
-            return _extract_number(style_name)
+        # Set lookup for faster `.startswith()` checks, selected by sorted prefix length
+        # Use tuple for startswith to optimize (same as 'any(style_name.startswith(x) for ...)')
+        list_prefixes = ("List Bullet", "List Continue", "List Number", "List")
+        # Group by prefix match, from longest to shortest
+        for prefix in list_prefixes:
+            if style_name.startswith(prefix):
+                # Avoid split, check trailing digits directly
+                # Split at last space, match number at end
+                sfx = style_name[len(prefix) :].strip()
+                if sfx.isdigit():
+                    return int(sfx) - 1
+                return 0
 
-        # Other styles
         return 0
 
     def _parse_paragraph_text_for_element_type(self, paragraph: Paragraph) -> Type[Text] | None:
