@@ -206,15 +206,29 @@ def points_to_bbox(points):
     assert len(points) == 8
 
     # [x1,y1,x2,y2,x3,y3,x4,y4]
-    left = min(points[::2])
-    right = max(points[::2])
-    top = min(points[1::2])
-    bottom = max(points[1::2])
+    left = right = points[0]
+    top = bottom = points[1]
+    for i in range(2, 8, 2):
+        x = points[i]
+        if x < left:
+            left = x
+        elif x > right:
+            right = x
+    for i in range(3, 8, 2):
+        y = points[i]
+        if y < top:
+            top = y
+        elif y > bottom:
+            bottom = y
 
-    left = max(left, 0)
-    top = max(top, 0)
-    right = max(right, 0)
-    bottom = max(bottom, 0)
+    if left < 0:
+        left = 0
+    if top < 0:
+        top = 0
+    if right < 0:
+        right = 0
+    if bottom < 0:
+        bottom = 0
     return [left, top, right, bottom]
 
 
@@ -285,7 +299,7 @@ def vis_points(
     """
     import cv2
 
-    points = np.array(points)
+    points = np.asarray(points)
     assert len(texts) == points.shape[0]
 
     for i, _points in enumerate(points):
@@ -296,13 +310,14 @@ def vis_points(
         cy = (top + bottom) // 2
 
         txt = texts[i]
+        txt_len = len(txt)
         font = cv2.FONT_HERSHEY_SIMPLEX
         cat_size = cv2.getTextSize(txt, font, 0.5, 2)[0]
 
         img = cv2.rectangle(
             img,
-            (cx - 5 * len(txt), cy - cat_size[1] - 5),
-            (cx - 5 * len(txt) + cat_size[0], cy - 5),
+            (cx - 5 * txt_len, cy - cat_size[1] - 5),
+            (cx - 5 * txt_len + cat_size[0], cy - 5),
             color,
             -1,
         )
@@ -310,7 +325,7 @@ def vis_points(
         img = cv2.putText(
             img,
             txt,
-            (cx - 5 * len(txt), cy - 5),
+            (cx - 5 * txt_len, cy - 5),
             font,
             0.5,
             (255, 255, 255),
