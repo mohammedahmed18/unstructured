@@ -801,39 +801,41 @@ class _DocxPartitioner:
         if not paragraph.hyperlinks:
             return [], [], []
 
-        def iter_paragraph_links() -> Iterator[Link]:
-            """Generate `Link` typed-dict for each external link in `paragraph`.
+        links: list[Link] = []
+        link_texts: list[str] = []
+        link_urls: list[str] = []
+        offset = 0
+        run_type = Run
+        hyperlink_type = Hyperlink
+        iter_inner_content = paragraph.iter_inner_content
 
-            Word uses hyperlinks for internal "jumps" within the document, as well as for web and
-            other external locations. Only generate the external ones.
-            """
-            offset = 0
-            for item in paragraph.iter_inner_content():
-                if isinstance(item, Run):
-                    offset += len(item.text)
-                elif isinstance(item, Hyperlink):  # pyright: ignore[reportUnnecessaryIsInstance]
-                    text = item.text
-                    url = item.url
-                    start_index = offset
-                    offset += len(text)
-                    # -- docx hyperlinks include "internal" links, like a table-of-contents
-                    # -- (TOC) entry has a jump to the named heading in the document (e.g.
-                    # -- '#_Toc147925734'. Such links have a fragment but not an address
-                    # -- (URL). Treat those as regular text.
-                    if not url:
-                        continue
-                    # -- all Word hyperlinks should contain text, otherwise they have no
-                    # -- visual appearance on the document. Not expected, but technically possible
-                    # -- so filter these out too.
-                    if not text:
-                        continue
-                    yield Link(text=text, url=url, start_index=start_index)
+        for item in iter_inner_content():
+            if isinstance(item, run_type):
+                offset += len(item.text)
+            elif isinstance(item, hyperlink_type):  # pyright: ignore[reportUnnecessaryIsInstance]
+                text = item.text
+                url = item.url
+                start_index = offset
+                offset += len(text)
+                # -- docx hyperlinks include "internal" links, like a table-of-contents
+                # -- (TOC) entry has a jump to the named heading in the document (e.g.
+                # -- '#_Toc147925734'. Such links have a fragment but not an address
+                # -- (URL). Treat those as regular text.
+                if not url:
+                    continue
+                # -- all Word hyperlinks should contain text, otherwise they have no
+                # -- visual appearance on the document. Not expected, but technically possible
+                # -- so filter these out too.
+                if not text:
+                    continue
+                link = Link(text=text, url=url, start_index=start_index)
+                # -- link["text"] is allowed to be None by the declared type for `Link`, but never will be
+                # -- here because such a link is filtered out above. Use empty str to satisfy type-checker.
+                link_text = link["text"] or ""
+                links.append(link)
+                link_texts.append(link_text)
+                link_urls.append(link["url"])
 
-        links = list(iter_paragraph_links())
-        # -- link["text"] is allowed to be None by the declared type for `Link`, but never will be
-        # -- here because such a link is filtered out above. Use empty str to satisfy type-checker.
-        link_texts = [link["text"] or "" for link in links]
-        link_urls = [link["url"] for link in links]
         return link_texts, link_urls, links
 
     def _paragraph_metadata(self, paragraph: Paragraph) -> ElementMetadata:
