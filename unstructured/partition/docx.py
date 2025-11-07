@@ -635,28 +635,11 @@ class _DocxPartitioner:
         footer applies uses the primary footer.
         """
 
-        def iter_footer(footer: _Footer, header_footer_type: str) -> Iterator[Footer]:
-            """Generate zero-or-one Footer elements for `footer`."""
-            if footer.is_linked_to_previous:
-                return
-            text = self._header_footer_text(footer)
-            if not text:
-                return
-            yield Footer(
-                text=text,
-                detection_origin=DETECTION_ORIGIN,
-                metadata=ElementMetadata(
-                    filename=self._opts.metadata_file_path,
-                    header_footer_type=header_footer_type,
-                    category_depth=0,
-                ),
-            )
-
-        yield from iter_footer(section.footer, "primary")
+        yield from self._iter_footer(section.footer, "primary")
         if section.different_first_page_header_footer:
-            yield from iter_footer(section.first_page_footer, "first_page")
+            yield from self._iter_footer(section.first_page_footer, "first_page")
         if self._document.settings.odd_and_even_pages_header_footer:
-            yield from iter_footer(section.even_page_footer, "even_page")
+            yield from self._iter_footer(section.even_page_footer, "even_page")
 
     def _iter_section_headers(self, section: Section) -> Iterator[Header]:
         """Generate `Header` elements for this section if it has them.
@@ -970,6 +953,23 @@ class _DocxPartitioner:
         """[contents, tags] pair describing emphasized text in `table`."""
         iter_tbl_emph, iter_tbl_emph_2 = itertools.tee(self._iter_table_emphasis(table))
         return ([e["text"] for e in iter_tbl_emph], [e["tag"] for e in iter_tbl_emph_2])
+
+    def _iter_footer(self, footer: _Footer, header_footer_type: str) -> Iterator[Footer]:
+        """Generate zero-or-one Footer elements for `footer`."""
+        if footer.is_linked_to_previous:
+            return
+        text = self._header_footer_text(footer)
+        if not text:
+            return
+        yield Footer(
+            text=text,
+            detection_origin=DETECTION_ORIGIN,
+            metadata=ElementMetadata(
+                filename=self._opts.metadata_file_path,
+                header_footer_type=header_footer_type,
+                category_depth=0,
+            ),
+        )
 
 
 # ================================================================================================
