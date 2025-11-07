@@ -54,6 +54,8 @@ from unstructured.partition.text_type import (
 from unstructured.partition.utils.constants import PartitionStrategy
 from unstructured.utils import is_temp_file_path, lazyproperty
 
+_LIST_PREFIXES = ("List", "List Bullet", "List Continue", "List Number")
+
 DETECTION_ORIGIN: str = "docx"
 # -- CT_* stands for "complex-type", an XML element type in docx parlance --
 BlockElement: TypeAlias = "CT_P | CT_Tbl"
@@ -147,6 +149,12 @@ def partition_docx(
     elements = _DocxPartitioner.iter_document_elements(opts)
 
     return list(elements)
+
+
+def _extract_number(suffix: str) -> int:
+    parts = suffix.split()
+    last_part = parts[-1]
+    return int(last_part) - 1 if last_part.isdigit() else 0
 
 
 class DocxPartitionerOptions:
@@ -864,8 +872,12 @@ class _DocxPartitioner:
             return round(float(xpath[0]))
 
         # Determine category depth from style name
-        style_name = (paragraph.style and paragraph.style.name) or "Normal"
-        depth = self._parse_category_depth_by_style_name(style_name)
+        style = paragraph.style
+        style_name = (style and style.name) or "Normal"
+        if style_name == "Normal":
+            depth = 0
+        else:
+            depth = self._parse_category_depth_by_style_name(style_name)
 
         if depth > 0:
             return depth
@@ -883,9 +895,6 @@ class _DocxPartitioner:
         Category depth is 0-indexed and relative to the other element types in the document.
         """
 
-        def _extract_number(suffix: str) -> int:
-            return int(suffix.split()[-1]) - 1 if suffix.split()[-1].isdigit() else 0
-
         # Heading styles
         if style_name.startswith("Heading"):
             return _extract_number(style_name)
@@ -894,9 +903,11 @@ class _DocxPartitioner:
             return 1
 
         # List styles
-        list_prefixes = ["List", "List Bullet", "List Continue", "List Number"]
-        if any(style_name.startswith(prefix) for prefix in list_prefixes):
-            return _extract_number(style_name)
+        for prefix in _LIST_PREFIXES:
+            if style_name.startswith(prefix):
+                return _extract_number(style_name)
+
+        # Other styles
 
         # Other styles
         return 0
