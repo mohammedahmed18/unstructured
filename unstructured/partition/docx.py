@@ -525,32 +525,33 @@ class _DocxPartitioner:
     def _header_footer_text(self, hdrftr: _Header | _Footer) -> str:
         """The text enclosed in `hdrftr` as a single string.
 
-        Each paragraph is included along with the text of each table cell. Empty text is omitted.
-        Each paragraph text-item is separated by a newline ("\n") although note that a paragraph
-        that contains a line-break will also include a newline representing that line-break, so
-        newlines do not necessarily distinguish separate paragraphs.
+                Each paragraph is included along with the text of each table cell. Empty text is omitted.
+                Each paragraph text-item is separated by a newline ("
+        ") although note that a paragraph
+                that contains a line-break will also include a newline representing that line-break, so
+                newlines do not necessarily distinguish separate paragraphs.
 
-        The entire text of a table is included as a single string with a space separating the text
-        of each cell.
+                The entire text of a table is included as a single string with a space separating the text
+                of each cell.
 
-        A header with no text or only whitespace returns the empty string ("").
+                A header with no text or only whitespace returns the empty string ("").
         """
+        texts: list[str] = []
+        append = texts.append
 
-        def iter_hdrftr_texts(hdrftr: _Header | _Footer) -> Iterator[str]:
-            """Generate each text item in `hdrftr` stripped of leading and trailing whitespace.
+        for block_item in hdrftr.iter_inner_content():
+            if isinstance(block_item, Paragraph):
+                text = block_item.text.strip()
+            # -- can only be a Paragraph or Table so far but more types may come later --
+            elif isinstance(block_item, DocxTable):  # pyright: ignore[reportUnnecessaryIsInstance]
+                text = " ".join(self._iter_table_texts(block_item))
+            else:
+                continue
 
-            This includes paragraphs as well as table cell contents.
-            """
-            for block_item in hdrftr.iter_inner_content():
-                if isinstance(block_item, Paragraph):
-                    yield block_item.text.strip()
-                # -- can only be a Paragraph or Table so far but more types may come later --
-                elif isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
-                    block_item, DocxTable
-                ):
-                    yield " ".join(self._iter_table_texts(block_item))
+            if text:
+                append(text)
 
-        return "\n".join(text for text in iter_hdrftr_texts(hdrftr) if text)
+        return "\n".join(texts)
 
     def _is_list_item(self, paragraph: Paragraph) -> bool:
         """True when `paragraph` can be identified as a list-item."""
