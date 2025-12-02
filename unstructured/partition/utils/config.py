@@ -41,7 +41,8 @@ class ENVConfig:
         return default_value
 
     def _get_float(self, var: str, default_value: float) -> float:
-        if value := self._get_string(var):
+        value = os.environ.get(var)
+        if value is not None and value != "":
             return float(value)
         return default_value
 
