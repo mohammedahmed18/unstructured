@@ -23,6 +23,11 @@ def _move_cells_for_spanned_cells(cells: List[Dict[str, Any]]):
     """
     sorted_cells = sorted(cells, key=lambda x: (x["y"], x["x"]))
     cells_occupied_by_spanned = set()
+    # Index cells by (y, x) for fast lookups during shifting
+    y_row_map = {}
+    for cell in sorted_cells:
+        y_row_map.setdefault(cell["y"], []).append(cell)
+
     for cell in sorted_cells:
         if cell["w"] > 1 or cell["h"] > 1:
             for i in range(cell["y"], cell["y"] + cell["h"]):
@@ -31,9 +36,11 @@ def _move_cells_for_spanned_cells(cells: List[Dict[str, Any]]):
                         cells_occupied_by_spanned.add((i, j))
         while (cell["y"], cell["x"]) in cells_occupied_by_spanned:
             cell_y, cell_x = cell["y"], cell["x"]
-            cells_to_the_right = [c for c in sorted_cells if c["y"] == cell_y and c["x"] >= cell_x]
-            for cell_to_move in cells_to_the_right:
-                cell_to_move["x"] += 1
+            row_cells = y_row_map[cell_y]
+            # Only process the cells to the right of the current position
+            for cell_to_move in row_cells:
+                if cell_to_move["x"] >= cell_x:
+                    cell_to_move["x"] += 1
             cells_occupied_by_spanned.remove((cell_y, cell_x))
     return sorted_cells
 
@@ -47,23 +54,32 @@ def html_table_to_deckerd(content: str) -> List[Dict[str, Any]]:
     Returns:
         A list of dictionaries where each dictionary represents a cell in the table.
     """
+    # Use lxml parser for improved performance if available
+    try:
+        soup = BeautifulSoup(content, "lxml")
+    except Exception:
+        soup = BeautifulSoup(content, "html.parser")
 
-    soup = BeautifulSoup(content, "html.parser")
     table = soup.find("table")
-    rows = table.find_all(["tr"])
+    rows = table.find_all("tr")
     table_data = []
+
+    # Pre-fetch commonly-used attributes from tags and avoid repeated method lookups
+    append_table_data = table_data.append
+    str_int = int
 
     for i, row in enumerate(rows):
         cells = row.find_all(["th", "td"])
         for j, cell_data in enumerate(cells):
+            attrs = cell_data.attrs
             cell = {
                 "y": i,
                 "x": j,
-                "w": int(cell_data.attrs.get("colspan", 1)),
-                "h": int(cell_data.attrs.get("rowspan", 1)),
+                "w": str_int(attrs.get("colspan", 1)),
+                "h": str_int(attrs.get("rowspan", 1)),
                 "content": cell_data.text,
             }
-            table_data.append(cell)
+            append_table_data(cell)
     return _move_cells_for_spanned_cells(table_data)
 
 
