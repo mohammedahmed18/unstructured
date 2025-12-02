@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from operator import itemgetter
 from typing import Any, Dict, List
 
 from bs4 import BeautifulSoup
@@ -137,7 +138,7 @@ def _convert_table_from_deckerd(content: List[Dict[str, Any]]) -> List[Dict[str,
 
 
 def _sort_table_cells(table_data: List[List[Dict[str, Any]]]) -> List[List[Dict[str, Any]]]:
-    return sorted(table_data, key=lambda cell: (cell["row_index"], cell["col_index"]))
+    return sorted(table_data, key=itemgetter("row_index", "col_index"))
 
 
 def extract_and_convert_tables_from_ground_truth(
