@@ -115,10 +115,12 @@ class BaseMetricsCalculator(ABC):
     ) -> BaseMetricsCalculator:
         """Overrides the default list of files to process."""
         if document_paths:
-            self._document_paths = [Path(p) for p in document_paths]
+            self._document_paths = [p if isinstance(p, Path) else Path(p) for p in document_paths]
 
         if ground_truth_paths:
-            self._ground_truth_paths = [Path(p) for p in ground_truth_paths]
+            self._ground_truth_paths = [
+                p if isinstance(p, Path) else Path(p) for p in ground_truth_paths
+            ]
 
         return self
 
