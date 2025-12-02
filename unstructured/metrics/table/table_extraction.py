@@ -121,18 +121,19 @@ def _convert_table_from_deckerd(content: List[Dict[str, Any]]) -> List[Dict[str,
       A list of dictionaries where each dictionary represents a cell in the table.
     """
     table_data = []
+    # Cache EMPTY_CELL locally for speed in loop
+    empty_cell = EMPTY_CELL
     for table in content:
-        try:
-            cell_data = {
-                "row_index": table["y"],
-                "col_index": table["x"],
-                "content": table["content"],
-            }
-        except KeyError:
-            cell_data = EMPTY_CELL
-        except TypeError:
-            cell_data = EMPTY_CELL
-        table_data.append(cell_data)
+        if isinstance(table, dict) and "y" in table and "x" in table and "content" in table:
+            table_data.append(
+                {
+                    "row_index": table["y"],
+                    "col_index": table["x"],
+                    "content": table["content"],
+                }
+            )
+        else:
+            table_data.append(empty_cell)
     return table_data
 
 
