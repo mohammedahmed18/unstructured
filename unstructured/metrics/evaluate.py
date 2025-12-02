@@ -530,16 +530,16 @@ def get_mean_grouping(
     if group_by not in ("doctype", "connector") and group_by != "all":
         raise ValueError("Invalid grouping category. Returning a non-group evaluation.")
 
-    if eval_name == "text_extraction":
-        agg_fields = ["cct-accuracy", "cct-%missing"]
-        agg_name = "cct"
-    elif eval_name == "element_type":
-        agg_fields = ["element-type-accuracy"]
-        agg_name = "element-type"
-    elif eval_name == "object_detection":
-        agg_fields = ["f1_score", "m_ap"]
-        agg_name = "object-detection"
-    else:
+    # Use a dictionary for fast lookup and completeness
+    eval_config = {
+        "text_extraction": (["cct-accuracy", "cct-%missing"], "cct"),
+        "element_type": (["element-type-accuracy"], "element-type"),
+        "object_detection": (["f1_score", "m_ap"], "object-detection"),
+    }
+    try:
+        agg_fields, default_agg_name = eval_config[eval_name]
+        agg_name = agg_name if agg_name is not None else default_agg_name
+    except KeyError:
         raise ValueError(
             f"Unknown metric for eval {eval_name}. "
             f"Expected `text_extraction` or `element_type` or `table_extraction`."
@@ -548,11 +548,13 @@ def get_mean_grouping(
     if isinstance(data_input, str):
         if not os.path.exists(data_input):
             raise FileNotFoundError(f"File {data_input} not found.")
-        if data_input.endswith(".csv"):
+        _, ext = os.path.splitext(data_input)
+        ext = ext.lower()
+        if ext == ".csv":
             df = pd.read_csv(data_input, header=None)
-        elif data_input.endswith(".tsv"):
+        elif ext == ".tsv":
             df = pd.read_csv(data_input, sep="\t")
-        elif data_input.endswith(".txt"):
+        elif ext == ".txt":
             df = pd.read_csv(data_input, sep="\t", header=None)
         else:
             raise ValueError("Please provide a .csv or .tsv file.")
@@ -570,21 +572,26 @@ def get_mean_grouping(
     grouped_df = []
     if group_by and group_by != "all":
         for field in agg_fields:
-            grouped_df.append(
-                _rename_aggregated_columns(
-                    df.groupby(group_by).agg({field: [_mean, _stdev, _pstdev, _count]})
-                )
+            field_gb = df.groupby(group_by, observed=True).agg(
+                {field: [_mean, _stdev, _pstdev, _count]}
             )
-    if group_by == "all":
-        df["grouping_key"] = 0
+            grouped_df.append(_rename_aggregated_columns(field_gb))
+    else:  # group_by == "all"
+        # Avoid unnecessary column creation by checking at runtime
+        if "grouping_key" not in df.columns:
+            df = df.copy(deep=False)
+            df["grouping_key"] = 0
         for field in agg_fields:
-            grouped_df.append(
-                _rename_aggregated_columns(
-                    df.groupby("grouping_key").agg({field: [_mean, _stdev, _pstdev, _count]})
-                )
+            field_gb = df.groupby("grouping_key", observed=True).agg(
+                {field: [_mean, _stdev, _pstdev, _count]}
             )
+            grouped_df.append(_rename_aggregated_columns(field_gb))
+    # This combines all groupby results using fast concat across columns (axis=1)
     grouped_df = _format_grouping_output(*grouped_df)
-    if "grouping_key" in grouped_df.columns.get_level_values(0):
+    # Only drop grouping_key *if* it is present in multiindex columns
+    # This avoids an IndexError in certain pandas versions for single-level columns
+    columns_lvl0 = grouped_df.columns.get_level_values(0)
+    if "grouping_key" in columns_lvl0:
         grouped_df = grouped_df.drop("grouping_key", axis=1, level=0)
 
     if export_filename:
