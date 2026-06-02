@@ -68,6 +68,44 @@ def test_process_file_with_ocr_invalid_filename(is_image):
         )
 
 
+def test_process_file_with_ocr_skips_convert_for_rgb_image(monkeypatch):
+    frame = MagicMock()
+    frame.mode = "RGB"
+    frame.convert = MagicMock(side_effect=AssertionError("RGB frames should not be converted"))
+
+    class _FakeImages:
+        format = "PNG"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    captured_images = []
+
+    monkeypatch.setattr(ocr.PILImage, "open", lambda *args, **kwargs: _FakeImages())
+    monkeypatch.setattr(ocr.ImageSequence, "Iterator", lambda *args, **kwargs: [frame])
+    monkeypatch.setattr(
+        ocr,
+        "supplement_page_layout_with_ocr",
+        lambda **kwargs: captured_images.append(kwargs["image"]) or kwargs["page_layout"],
+    )
+
+    out_layout = DocumentLayout.from_pages([PageLayout(number=0, image=Image.new("RGB", (1, 1)))])
+    result = ocr.process_file_with_ocr(
+        filename="dummy",
+        out_layout=out_layout,
+        extracted_layout=[],
+        is_image=True,
+        infer_table_structure=True,
+    )
+
+    assert result.pages == out_layout.pages
+    assert captured_images == [frame]
+    frame.convert.assert_not_called()
+
+
 def test_supplement_page_layout_with_ocr_invalid_ocr():
     with pytest.raises(ValueError):
         _ = ocr.supplement_page_layout_with_ocr(

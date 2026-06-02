@@ -154,22 +154,26 @@ def process_file_with_ocr(
         if is_image:
             with PILImage.open(filename) as images:
                 image_format = images.format
-                for i, image in enumerate(ImageSequence.Iterator(images)):
-                    image = image.convert("RGB")
+                for i, frame in enumerate(ImageSequence.Iterator(images)):
+                    image = frame if frame.mode == "RGB" else frame.convert("RGB")
                     image.format = image_format
                     extracted_regions = extracted_layout[i] if i < len(extracted_layout) else None
-                    merged_page_layout = supplement_page_layout_with_ocr(
-                        page_layout=out_layout.pages[i],
-                        image=image,
-                        infer_table_structure=infer_table_structure,
-                        ocr_agent=ocr_agent,
-                        ocr_languages=ocr_languages,
-                        ocr_mode=ocr_mode,
-                        extracted_regions=extracted_regions,
-                        ocr_layout_dumper=ocr_layout_dumper,
-                        table_ocr_agent=table_ocr_agent,
-                    )
-                    merged_page_layouts.append(merged_page_layout)
+                    try:
+                        merged_page_layout = supplement_page_layout_with_ocr(
+                            page_layout=out_layout.pages[i],
+                            image=image,
+                            infer_table_structure=infer_table_structure,
+                            ocr_agent=ocr_agent,
+                            ocr_languages=ocr_languages,
+                            ocr_mode=ocr_mode,
+                            extracted_regions=extracted_regions,
+                            ocr_layout_dumper=ocr_layout_dumper,
+                            table_ocr_agent=table_ocr_agent,
+                        )
+                        merged_page_layouts.append(merged_page_layout)
+                    finally:
+                        if image is not frame:
+                            image.close()
                 return DocumentLayout.from_pages(merged_page_layouts)
         else:
             with tempfile.TemporaryDirectory() as temp_dir:

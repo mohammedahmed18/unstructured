@@ -4,7 +4,6 @@ import os
 import re
 from typing import TYPE_CHECKING
 
-import cv2
 import numpy as np
 import pandas as pd
 import unstructured_pytesseract
@@ -76,17 +75,21 @@ class OCRAgentTesseract(OCRAgent):
                 np.round(np.sqrt(TESSERACT_MAX_SIZE / np.prod(image.size) / IMAGE_COLOR_DEPTH), 1),
             )
             # rounding avoids unnecessary precision and potential numerical issues associated
-            # with numbers very close to 1 inside cv2 image processing
+            # with numbers very close to 1 inside image processing
             zoom = min(
                 np.round(env_config.TESSERACT_OPTIMUM_TEXT_HEIGHT / text_height, 1),
                 max_zoom,
             )
-            ocr_df = self.image_to_data_with_character_confidence_filter(
-                np.array(zoom_image(image, zoom)),
-                lang=self.language,
-                character_confidence_threshold=env_config.TESSERACT_CHARACTER_CONFIDENCE_THRESHOLD,
-            )
-            ocr_df = ocr_df.dropna()
+            zoomed_image = zoom_image(image, zoom)
+            try:
+                ocr_df = self.image_to_data_with_character_confidence_filter(
+                    zoomed_image,
+                    lang=self.language,
+                    character_confidence_threshold=env_config.TESSERACT_CHARACTER_CONFIDENCE_THRESHOLD,
+                )
+                ocr_df = ocr_df.dropna()
+            finally:
+                zoomed_image.close()
         ocr_regions = self.parse_data(ocr_df, zoom=zoom)
 
         return ocr_regions
@@ -242,19 +245,10 @@ class OCRAgentTesseract(OCRAgent):
 
 
 def zoom_image(image: PILImage.Image, zoom: float = 1) -> PILImage.Image:
-    """scale an image based on the zoom factor using cv2; the scaled image is post processed by
-    dilation then erosion to improve edge sharpness for OCR tasks"""
+    """Scale an image using PIL without materializing a full numpy copy first."""
     if zoom <= 0:
-        # no zoom but still does dilation and erosion
         zoom = 1
-    new_image = cv2.resize(
-        cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR),
-        None,
-        fx=zoom,
-        fy=zoom,
-        interpolation=cv2.INTER_CUBIC,
-    )
-
-    # Skip dilation and erosion for 1x1 kernel as they are no-ops
-
-    return PILImage.fromarray(new_image)
+    width, height = image.size
+    new_width = max(1, int(np.round(width * zoom, 0)))
+    new_height = max(1, int(np.round(height * zoom, 0)))
+    return image.resize((new_width, new_height), resample=PILImage.Resampling.BICUBIC)
