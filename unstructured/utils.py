@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import importlib
+from importlib.util import find_spec
 import inspect
 import json
 import os
@@ -119,13 +119,7 @@ def requires_dependencies(
 
 @lru_cache(maxsize=128)
 def dependency_exists(dependency: str):
-    try:
-        importlib.import_module(dependency)
-    except ImportError as e:
-        # Check to make sure this isn't some unrelated import error.
-        if dependency in repr(e):
-            return False
-    return True
+    return find_spec(dependency) is not None
 
 
 def _first_and_remaining_iterator(it: Iterable[_T]) -> Tuple[_T, Iterator[_T]]:
