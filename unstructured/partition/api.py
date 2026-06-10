@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import contextlib
+import os
 from typing import IO, Any, Optional, Sequence
+from urllib.parse import urlparse
 
 import requests
 from unstructured_client import UnstructuredClient
@@ -19,6 +21,32 @@ DEFAULT_RETRIES_MAX_INTERVAL_SEC = 720000
 DEFAULT_RETRIES_EXPONENT = 1.5
 DEFAULT_RETRIES_MAX_ELAPSED_TIME_SEC = 1800000
 DEFAULT_RETRIES_CONNECTION_ERRORS = True
+DEFAULT_API_PATH = "/general/v0/general"
+DEFAULT_API_URL = f"https://api.unstructured.io{DEFAULT_API_PATH}"
+API_URL_ENV_VARS = ("UNSTRUCTURED_API_URL", "UNS_API_URL")
+API_KEY_ENV_VARS = ("UNSTRUCTURED_API_KEY", "UNS_API_KEY")
+
+
+def _first_non_empty_env(env_vars: tuple[str, ...]) -> str | None:
+    for env_var in env_vars:
+        if value := os.getenv(env_var):
+            return value
+    return None
+
+
+def _resolve_api_url(api_url: str | None) -> str:
+    resolved_api_url = api_url or _first_non_empty_env(API_URL_ENV_VARS) or DEFAULT_API_URL
+    parsed = urlparse(resolved_api_url)
+
+    # Accept a base URL like http://127.0.0.1:5000 and normalize it to the partition route.
+    if parsed.scheme and parsed.netloc and parsed.path in ("", "/"):
+        return resolved_api_url.rstrip("/") + DEFAULT_API_PATH
+
+    return resolved_api_url
+
+
+def _resolve_api_key(api_key: str | None) -> str:
+    return api_key or _first_non_empty_env(API_KEY_ENV_VARS) or ""
 
 
 def partition_via_api(
@@ -26,8 +54,8 @@ def partition_via_api(
     content_type: Optional[str] = None,
     file: Optional[IO[bytes]] = None,
     file_filename: Optional[str] = None,
-    api_url: str = "https://api.unstructured.io/general/v0/general",
-    api_key: str = "",
+    api_url: str | None = None,
+    api_key: str | None = None,
     metadata_filename: Optional[str] = None,
     retries_initial_interval: [int] = None,
     retries_max_interval: Optional[int] = None,
@@ -54,9 +82,13 @@ def partition_via_api(
     metadata_filename
         When file is not None, the filename (string) to store in element metadata. E.g. "foo.txt"
     api_url
-        The URL for the Unstructured API. Defaults to the hosted Unstructured API.
+        The URL for the Unstructured API. Defaults to the value of
+        `UNSTRUCTURED_API_URL`/`UNS_API_URL` if set, otherwise the hosted Unstructured API.
+        A bare server URL like `http://127.0.0.1:5000` is accepted and automatically normalized to
+        the partition endpoint.
     api_key
-        The API key to pass to the Unstructured API.
+        The API key to pass to the Unstructured API. Defaults to the value of
+        `UNSTRUCTURED_API_KEY`/`UNS_API_KEY` if set.
     retries_initial_interval
         Defines the time interval (in seconds) to wait before the first retry in case of a request
         failure. Defaults to 3000. If set should be > 0.
@@ -91,9 +123,12 @@ def partition_via_api(
             "Please use metadata_filename instead.",
         )
 
+    api_url = _resolve_api_url(api_url)
+    api_key = _resolve_api_key(api_key)
+
     # Note(austin) - the sdk takes the base url, but we have the full api_url
     # For consistency, just strip off the path when it's given
-    base_url = api_url[:-19] if "/general/v0/general" in api_url else api_url
+    base_url = api_url[: -len(DEFAULT_API_PATH)] if api_url.endswith(DEFAULT_API_PATH) else api_url
     sdk = UnstructuredClient(api_key_auth=api_key, server_url=base_url)
 
     if filename is not None:
@@ -234,8 +269,8 @@ def partition_multiple_via_api(
     content_types: Optional[list[str]] = None,
     files: Optional[Sequence[IO[bytes]]] = None,
     file_filenames: Optional[list[str]] = None,
-    api_url: str = "https://api.unstructured.io/general/v0/general",
-    api_key: str = "",
+    api_url: str | None = None,
+    api_key: str | None = None,
     metadata_filenames: Optional[list[str]] = None,
     **request_kwargs: Any,
 ) -> list[list[Element]]:
@@ -257,13 +292,20 @@ def partition_multiple_via_api(
     metadata_filename
         When file is not None, the filename (string) to store in element metadata. E.g. "foo.txt"
     api_url
-        The URL for the Unstructured API. Defaults to the hosted Unstructured API.
+        The URL for the Unstructured API. Defaults to the value of
+        `UNSTRUCTURED_API_URL`/`UNS_API_URL` if set, otherwise the hosted Unstructured API.
+        A bare server URL like `http://127.0.0.1:5000` is accepted and automatically normalized to
+        the partition endpoint.
     api_key
-        The API key to pass to the Unstructured API.
+        The API key to pass to the Unstructured API. Defaults to the value of
+        `UNSTRUCTURED_API_KEY`/`UNS_API_KEY` if set.
     request_kwargs
         Additional parameters to pass to the data field of the request to the Unstructured API.
         For example the `strategy` parameter.
     """
+    api_url = _resolve_api_url(api_url)
+    api_key = _resolve_api_key(api_key)
+
     headers = {
         "ACCEPT": "application/json",
         "UNSTRUCTURED-API-KEY": api_key,

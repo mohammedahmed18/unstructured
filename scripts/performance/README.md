@@ -43,3 +43,59 @@ Usage:
 - The script supports time profiling with cProfile and memory profiling with memray.
 - Users can choose different visualization options such as flamegraphs, tables, trees, summaries, and statistics.
 - Test documents are synced from an S3 bucket to a local directory before running the profiles
+
+### API E2E runner
+
+For reproducing behavior through `partition_via_api()` instead of local `partition()`, use
+`scripts/performance/run_partition_via_api.py`.
+
+`partition_via_api()` and `partition_multiple_via_api()` now honor these environment variables by
+default:
+
+- `UNSTRUCTURED_API_URL` or `UNS_API_URL`
+- `UNSTRUCTURED_API_KEY` or `UNS_API_KEY`
+
+That means you can point the client at a local API server without changing your calling code:
+
+```bash
+export UNSTRUCTURED_API_URL=http://127.0.0.1:5000
+python scripts/performance/run_partition_via_api.py \
+  example-docs/pdf/layout-parser-paper-fast.pdf \
+  --strategy fast \
+  --repeat 5
+```
+
+Extra API request kwargs can be supplied as JSON:
+
+```bash
+python scripts/performance/run_partition_via_api.py \
+  example-docs/pdf/layout-parser-paper-fast.pdf \
+  --strategy hi_res \
+  --request-kwargs-json '{"coordinates": "true", "split_pdf_page": false}'
+```
+
+For PDF-specific client memory testing, the runner also has convenience flags for
+the split-PDF path:
+
+```bash
+python scripts/performance/run_partition_via_api.py \
+  example-docs/pdf/layout-parser-paper-fast.pdf \
+  --partition-mode fast \
+  --split-pdf-page \
+  --page-batch-size 4 \
+  --repeat 5
+```
+
+`--page-batch-size` is translated into the SDK's `split_pdf_concurrency_level`
+for a single PDF input.
+
+For server-side profiling of the local `unstructured-api` process while driving requests from this
+client repo, use the API repo harness:
+
+```bash
+cd ~/core-product/unstructured-api
+.venv/bin/python scripts/profile_unstructured_client_e2e.py \
+  ~/unstructured/example-docs/pdf/layout-parser-paper-fast.pdf \
+  --strategy fast \
+  --repeat 10
+```

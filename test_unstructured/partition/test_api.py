@@ -3,6 +3,7 @@ import contextlib
 import json
 import os
 import pathlib
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 
@@ -14,6 +15,7 @@ from unstructured_client.models.operations import PartitionRequest
 from unstructured_client.models.shared import PartitionParameters
 from unstructured_client.utils import retries
 
+import unstructured.partition.api as partition_api_module
 from unstructured.documents.elements import ElementType, NarrativeText
 from unstructured.partition.api import (
     DEFAULT_RETRIES_MAX_ELAPSED_TIME_SEC,
@@ -27,11 +29,16 @@ from ..unit_utils import ANY, FixtureRequest, example_doc_path, method_mock
 
 DIRECTORY = pathlib.Path(__file__).parent.resolve()
 
-# NOTE(yao): point to paid API for now
-API_URL = "https://api.unstructuredapp.io/general/v0/general"
+TRUTHY_VALUES = {"true", "yes", "y", "1"}
+# NOTE(yao): point to paid API by default, but allow local opt-in for e2e work.
+API_URL = os.getenv("UNSTRUCTURED_API_URL", "https://api.unstructuredapp.io/general/v0/general")
+run_api_e2e = os.getenv("UNSTRUCTURED_RUN_API_E2E", "").lower() in TRUTHY_VALUES
 
 is_in_ci = os.getenv("CI", "").lower() not in {"", "false", "f", "0"}
-skip_not_on_main = os.getenv("GITHUB_REF_NAME", "").lower() != "main"
+run_remote_or_local_api_e2e = is_in_ci or run_api_e2e
+skip_not_on_main = (
+    is_in_ci and not run_api_e2e and os.getenv("GITHUB_REF_NAME", "").lower() != "main"
+)
 
 
 def test_partition_via_api_with_filename_correctly_calls_sdk(
@@ -124,7 +131,79 @@ def test_partition_via_api_raises_with_bad_response(request: FixtureRequest):
     partition_mock_.assert_called_once()
 
 
-@pytest.mark.skipif(not is_in_ci, reason="Skipping test run outside of CI")
+@pytest.mark.parametrize(
+    ("api_url_env_var", "api_key_env_var"),
+    [
+        ("UNSTRUCTURED_API_URL", "UNSTRUCTURED_API_KEY"),
+        ("UNS_API_URL", "UNS_API_KEY"),
+    ],
+)
+def test_partition_via_api_uses_env_url_and_key_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    api_url_env_var: str,
+    api_key_env_var: str,
+):
+    monkeypatch.setenv(api_url_env_var, "http://127.0.0.1:5000")
+    monkeypatch.setenv(api_key_env_var, "local-test-key")
+
+    captured: dict[str, Any] = {}
+
+    class FakeGeneral:
+        def partition(self, request: PartitionRequest, retries=None):  # noqa: ANN001
+            captured["request"] = request
+            captured["retries"] = retries
+            return FakeResponse(status_code=200)
+
+    class FakeClient:
+        def __init__(self, api_key_auth: str, server_url: str):
+            captured["api_key_auth"] = api_key_auth
+            captured["server_url"] = server_url
+            self.general = FakeGeneral()
+            self.sdk_configuration = SimpleNamespace(retry_config=None)
+
+    monkeypatch.setattr(partition_api_module, "UnstructuredClient", FakeClient)
+
+    elements = partition_via_api(filename=example_doc_path("eml/fake-email.eml"))
+
+    assert captured["api_key_auth"] == "local-test-key"
+    assert captured["server_url"] == "http://127.0.0.1:5000"
+    assert len(elements) == 1
+
+
+@pytest.mark.parametrize(
+    ("api_url_env_var", "api_key_env_var"),
+    [
+        ("UNSTRUCTURED_API_URL", "UNSTRUCTURED_API_KEY"),
+        ("UNS_API_URL", "UNS_API_KEY"),
+    ],
+)
+def test_partition_multiple_via_api_uses_env_url_and_key_by_default(
+    request: FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    api_url_env_var: str,
+    api_key_env_var: str,
+):
+    monkeypatch.setenv(api_url_env_var, "http://127.0.0.1:5000")
+    monkeypatch.setenv(api_key_env_var, "local-test-key")
+
+    partition_mock_ = method_mock(
+        request, requests, "post", return_value=FakeResponse(status_code=200)
+    )
+    filename = example_doc_path("eml/fake-email.eml")
+
+    elements = partition_multiple_via_api(filenames=[filename])
+
+    partition_mock_.assert_called_once_with(
+        "http://127.0.0.1:5000/general/v0/general",
+        headers={"ACCEPT": "application/json", "UNSTRUCTURED-API-KEY": "local-test-key"},
+        data={},
+        files=[("files", (example_doc_path("eml/fake-email.eml"), ANY, None))],
+    )
+    assert elements[0][0] == NarrativeText("This is a test email to use for unit tests.")
+    assert elements[0][0].metadata.filetype == "message/rfc822"
+
+
+@pytest.mark.skipif(not run_remote_or_local_api_e2e, reason="Skipping API e2e run")
 @pytest.mark.skipif(skip_not_on_main, reason="Skipping test run outside of main branch")
 def test_partition_via_api_with_no_strategy():
     test_file = example_doc_path("pdf/loremipsum-flat.pdf")
@@ -164,7 +243,7 @@ def test_partition_via_api_with_no_strategy():
     assert elements_hi_res[0].metadata.coordinates is None
 
 
-@pytest.mark.skipif(not is_in_ci, reason="Skipping test run outside of CI")
+@pytest.mark.skipif(not run_remote_or_local_api_e2e, reason="Skipping API e2e run")
 @pytest.mark.skipif(skip_not_on_main, reason="Skipping test run outside of main branch")
 def test_partition_via_api_with_image_hi_res_strategy_includes_coordinates():
     # coordinates not included by default to limit payload size
@@ -179,7 +258,7 @@ def test_partition_via_api_with_image_hi_res_strategy_includes_coordinates():
     assert elements[0].metadata.coordinates is not None
 
 
-@pytest.mark.skipif(not is_in_ci, reason="Skipping test run outside of CI")
+@pytest.mark.skipif(not run_remote_or_local_api_e2e, reason="Skipping API e2e run")
 @pytest.mark.skipif(skip_not_on_main, reason="Skipping test run outside of main branch")
 def test_partition_via_api_image_block_extraction():
     elements = partition_via_api(
@@ -198,7 +277,7 @@ def test_partition_via_api_image_block_extraction():
         assert isinstance(image_data, bytes)
 
 
-@pytest.mark.skipif(not is_in_ci, reason="Skipping test run outside of CI")
+@pytest.mark.skipif(not run_remote_or_local_api_e2e, reason="Skipping API e2e run")
 @pytest.mark.skipif(skip_not_on_main, reason="Skipping test run outside of main branch")
 def test_partition_via_api_retries_config():
     elements = partition_via_api(
@@ -483,13 +562,13 @@ def test_partition_multiple_via_api_from_files_raises_without_filenames():
 
 
 def get_api_key():
-    api_key = os.getenv("UNS_API_KEY")
-    if api_key is None:
-        raise ValueError("UNS_API_KEY environment variable not set")
-    return api_key
+    for env_var in ("UNSTRUCTURED_API_KEY", "UNS_API_KEY"):
+        if api_key := os.getenv(env_var):
+            return api_key
+    raise ValueError("UNSTRUCTURED_API_KEY or UNS_API_KEY environment variable not set")
 
 
-@pytest.mark.skipif(not is_in_ci, reason="Skipping test run outside of CI")
+@pytest.mark.skipif(not run_remote_or_local_api_e2e, reason="Skipping API e2e run")
 @pytest.mark.skipif(skip_not_on_main, reason="Skipping test run outside of main branch")
 def test_partition_multiple_via_api_valid_request_data_kwargs():
     filenames = [
@@ -509,7 +588,7 @@ def test_partition_multiple_via_api_valid_request_data_kwargs():
     assert isinstance(list_of_lists_of_elements[1], list)
 
 
-@pytest.mark.skipif(not is_in_ci, reason="Skipping test run outside of CI")
+@pytest.mark.skipif(not run_remote_or_local_api_e2e, reason="Skipping API e2e run")
 def test_partition_multiple_via_api_invalid_request_data_kwargs():
     filenames = [
         example_doc_path("pdf/layout-parser-paper-fast.pdf"),
