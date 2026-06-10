@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import pytest
 
@@ -86,6 +87,26 @@ def test_requires_dependencies_decorator_in_class():
             import numpy  # noqa: F401
 
     TestClass()
+
+
+def test_dependency_exists_does_not_import_module(tmp_path, monkeypatch):
+    package_dir = tmp_path / "lazy_pkg"
+    package_dir.mkdir()
+    marker_file = tmp_path / "imported.txt"
+    package_dir.joinpath("__init__.py").write_text(
+        f"from pathlib import Path\nPath({str(marker_file)!r}).write_text('imported')\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    utils.dependency_exists.cache_clear()
+    sys.modules.pop("lazy_pkg", None)
+
+    try:
+        assert utils.dependency_exists("lazy_pkg") is True
+        assert "lazy_pkg" not in sys.modules
+        assert not marker_file.exists()
+    finally:
+        utils.dependency_exists.cache_clear()
+        sys.modules.pop("lazy_pkg", None)
 
 
 @pytest.mark.parametrize("iterator", [[0, 1], (0, 1), range(10), [0], (0,), range(1)])
