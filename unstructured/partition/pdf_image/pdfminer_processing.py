@@ -45,13 +45,40 @@ def process_file_with_pdfminer(
     dpi: int = env_config.PDF_RENDER_DPI,
     password: Optional[str] = None,
     pdfminer_config: Optional[PDFMinerConfig] = None,
+    rotation_corrections: Optional[List[int]] = None,
 ) -> tuple[List[List["TextRegion"]], List[List]]:
     with open_filename(filename, "rb") as fp:
         fp = cast(BinaryIO, fp)
         extracted_layout, layouts_links = process_data_with_pdfminer(
-            file=fp, dpi=dpi, password=password, pdfminer_config=pdfminer_config
+            file=fp,
+            dpi=dpi,
+            password=password,
+            pdfminer_config=pdfminer_config,
+            rotation_corrections=rotation_corrections,
         )
         return extracted_layout, layouts_links
+
+
+def _rotate_bboxes(coords: np.ndarray, angle: int, width: float, height: float) -> np.ndarray:
+    """Rotate bounding boxes to mirror a rendered page image that was rotated ``angle``
+    degrees counter-clockwise (PIL convention) with ``expand=True``.
+
+    ``width``/``height`` are the page-image dimensions in the un-rotated (display) frame.
+    unstructured-inference may rotate a page image to make its dominant text upright;
+    applying the same rotation here keeps the pdfminer layer aligned with the
+    object-detection layer so the two merge correctly.
+    """
+    angle %= 360
+    if angle == 0 or coords.size == 0:
+        return coords
+    x1, y1, x2, y2 = coords[:, 0], coords[:, 1], coords[:, 2], coords[:, 3]
+    if angle == 90:
+        return np.column_stack((y1, width - x2, y2, width - x1))
+    if angle == 180:
+        return np.column_stack((width - x2, height - y2, width - x1, height - y1))
+    if angle == 270:
+        return np.column_stack((height - y2, x1, height - y1, x2))
+    return coords
 
 
 def _validate_bbox(bbox: list[int | float]) -> bool:
@@ -531,9 +558,16 @@ def process_data_with_pdfminer(
     dpi: int = env_config.PDF_RENDER_DPI,
     password: Optional[str] = None,
     pdfminer_config: Optional[PDFMinerConfig] = None,
+    rotation_corrections: Optional[List[int]] = None,
 ) -> tuple[List[LayoutElements], List[List]]:
     """Loads the image and word objects from a pdf using pdfplumber and the image renderings of the
-    pdf pages using pdf2image"""
+    pdf pages using pdf2image
+
+    ``rotation_corrections`` is an optional per-page list of extra rotations (degrees,
+    counter-clockwise) that unstructured-inference applied to the rendered page images to
+    make their text upright. Mirroring those rotations onto the extracted coordinates keeps
+    the pdfminer layer aligned with the object-detection layer.
+    """
 
     from unstructured_inference.inference.layoutelement import LayoutElements
 
@@ -558,15 +592,33 @@ def process_data_with_pdfminer(
             annotation_list, page_layout, height, page_number, coef, pdfminer_config
         )
 
-        links = [
-            {
-                "bbox": [x * coef for x in metadata["bbox"]],
-                "text": metadata["text"],
-                "url": metadata["uri"],
-                "start_index": metadata["start_index"],
-            }
-            for metadata in urls_metadata
-        ]
+        # Mirror any image rotation unstructured-inference applied for this page so the
+        # extracted coordinates share the object-detection layer's frame (see _rotate_bboxes).
+        angle = (
+            rotation_corrections[page_number]
+            if rotation_corrections is not None and page_number < len(rotation_corrections)
+            else 0
+        )
+        if angle:
+            layout.element_coords = _rotate_bboxes(
+                layout.element_coords, angle, width * coef, height * coef
+            )
+
+        links = []
+        for metadata in urls_metadata:
+            bbox = [x * coef for x in metadata["bbox"]]
+            if angle:
+                bbox = _rotate_bboxes(
+                    np.array([bbox], dtype=float), angle, width * coef, height * coef
+                )[0].tolist()
+            links.append(
+                {
+                    "bbox": bbox,
+                    "text": metadata["text"],
+                    "url": metadata["uri"],
+                    "start_index": metadata["start_index"],
+                }
+            )
 
         clean_layouts = []
         for threshold, element_class in zip(
@@ -804,12 +856,24 @@ def remove_duplicate_elements(
     # experiments show 2e3 is the block size that constrains the peak memory around 1Gb for this
     # function; that accounts for all the intermediate matricies allocated and memory for storing
     # final results
-    memory_cap_in_gb = os.getenv("UNST_MATMUL_MEMORY_CAP_IN_GB", 1)
+    memory_cap_in_gb = float(os.getenv("UNST_MATMUL_MEMORY_CAP_IN_GB", 1))
+    if memory_cap_in_gb <= 0:
+        raise ValueError("UNST_MATMUL_MEMORY_CAP_IN_GB must be > 0")
     n_split = np.ceil(coords.shape[0] / 2e3 / memory_cap_in_gb)
     splits = np.array_split(coords, n_split, axis=0)
 
-    ious = [~np.triu(boxes_iou(split, coords, threshold), k=1).any(axis=1) for split in splits]
-    return elements.slice(np.concatenate(ious))
+    # A box is dropped only when it near-duplicates a *later* box (higher global index) -- the
+    # strict upper triangle of the full IoU matrix. Each split is a contiguous block of rows
+    # compared against all coords, so the triangle's diagonal must be offset by the split's
+    # global start index; otherwise rows in later splits match themselves (and earlier boxes)
+    # and get wrongly removed, decimating dense pages (> 2000 elements).
+    keep_masks = []
+    offset = 0
+    for split in splits:
+        iou = boxes_iou(split, coords, threshold)
+        keep_masks.append(~np.triu(iou, k=1 + offset).any(axis=1))
+        offset += split.shape[0]
+    return elements.slice(np.concatenate(keep_masks))
 
 
 def _aggregated_iou(box1s, box2):

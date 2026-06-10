@@ -19,6 +19,7 @@ from test_unstructured.unit_utils import example_doc_path
 from unstructured.partition.auto import partition
 from unstructured.partition.pdf_image.pdfminer_processing import (
     _deduplicate_ltchars,
+    _rotate_bboxes,
     _validate_bbox,
     aggregate_embedded_text_by_block,
     bboxes1_is_almost_subregion_of_bboxes2,
@@ -84,6 +85,34 @@ mix_elements_inside_table = [
     LayoutElement(bbox=Rectangle(0, 510, 50, 600), text="Inside table2", source=Source.PDFMINER),
     LayoutElement(bbox=Rectangle(0, 550, 70, 650), text="Inside table2", source=Source.PDFMINER),
 ]
+
+
+def test_rotate_bboxes_matches_pil_rotation_directions():
+    """_rotate_bboxes mirrors PIL.Image.rotate(angle, expand=True) (counter-clockwise)."""
+    W, H = 100.0, 200.0  # portrait display-frame canvas
+    coords = np.array([[10.0, 20.0, 30.0, 60.0]])
+
+    # 0 / 360 are no-ops
+    assert np.array_equal(_rotate_bboxes(coords, 0, W, H), coords)
+    assert np.array_equal(_rotate_bboxes(coords, 360, W, H), coords)
+
+    # 90 CCW (expand): x' = y, y' = W - x
+    r90 = _rotate_bboxes(coords, 90, W, H)
+    assert np.allclose(r90, [[20.0, W - 30.0, 60.0, W - 10.0]])
+    # 180
+    r180 = _rotate_bboxes(coords, 180, W, H)
+    assert np.allclose(r180, [[W - 30.0, H - 60.0, W - 10.0, H - 20.0]])
+    # 270 CCW
+    assert np.allclose(_rotate_bboxes(coords, 270, W, H), [[H - 60.0, 10.0, H - 20.0, 30.0]])
+
+    # rotating 90 then 270 (about the post-rotation H x W canvas) restores the original box
+    assert np.allclose(_rotate_bboxes(r90, 270, H, W), coords)
+
+    # outputs remain valid bboxes (x1 < x2, y1 < y2)
+    for angle in (90, 180, 270):
+        r = _rotate_bboxes(coords, angle, W, H)
+        assert r[0, 0] < r[0, 2]
+        assert r[0, 1] < r[0, 3]
 
 
 @pytest.mark.parametrize(
@@ -274,6 +303,31 @@ def test_remove_duplicate_elements():
     assert len(result) == 2
     assert result.texts.tolist() == ["Text 2", "Text 3"]
     assert result.element_coords.tolist() == [[0, 0, 10, 10], [20, 20, 30, 30]]
+
+
+def test_remove_duplicate_elements_dense_page_is_not_decimated():
+    """Pages with more than ~2000 elements are chunked internally; the dedup mask for each
+    chunk must be offset by the chunk's global index. Otherwise rows in later chunks match
+    themselves and are wrongly dropped, decimating dense pages."""
+    # 2500 unique, non-overlapping boxes on a 50x50 grid (zero IoU between any two)
+    unique = [
+        EmbeddedTextRegion(
+            bbox=Rectangle((i % 50) * 20, (i // 50) * 20, (i % 50) * 20 + 10, (i // 50) * 20 + 10),
+            text=f"Text {i}",
+        )
+        for i in range(2500)
+    ]
+    # one exact duplicate of the first box, appended last so the pair spans two chunks
+    duplicate = EmbeddedTextRegion(bbox=Rectangle(0, 0, 10, 10), text="Text 0 dup")
+    sample_elements = TextRegions.from_list([*unique, duplicate])
+
+    result = remove_duplicate_elements(sample_elements)
+
+    # only the single cross-chunk duplicate pair collapses; every unique box is kept
+    assert len(result) == 2500
+    # the later element of the duplicate pair is the one retained
+    assert "Text 0 dup" in result.texts.tolist()
+    assert "Text 0" not in result.texts.tolist()
 
 
 def test_process_file_with_pdfminer():
