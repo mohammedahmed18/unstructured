@@ -122,17 +122,15 @@ def _convert_table_from_deckerd(content: List[Dict[str, Any]]) -> List[Dict[str,
     """
     table_data = []
     for table in content:
-        try:
+        if isinstance(table, dict) and "y" in table and "x" in table and "content" in table:
             cell_data = {
                 "row_index": table["y"],
                 "col_index": table["x"],
                 "content": table["content"],
             }
-        except KeyError:
-            cell_data = EMPTY_CELL
-        except TypeError:
-            cell_data = EMPTY_CELL
-        table_data.append(cell_data)
+            table_data.append(cell_data)
+        else:
+            table_data.append(EMPTY_CELL)
     return table_data
 
 
