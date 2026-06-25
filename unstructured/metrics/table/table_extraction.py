@@ -122,15 +122,13 @@ def _convert_table_from_deckerd(content: List[Dict[str, Any]]) -> List[Dict[str,
     """
     table_data = []
     for table in content:
-        try:
+        if isinstance(table, dict) and "y" in table and "x" in table and "content" in table:
             cell_data = {
                 "row_index": table["y"],
                 "col_index": table["x"],
                 "content": table["content"],
             }
-        except KeyError:
-            cell_data = EMPTY_CELL
-        except TypeError:
+        else:
             cell_data = EMPTY_CELL
         table_data.append(cell_data)
     return table_data
@@ -281,8 +279,8 @@ def extract_cells_from_table_as_cells(element: Dict[str, Any]) -> List[Dict[str,
             ...,
         ]
     """
-    predicted_cells = element["metadata"].get("table_as_cells")
-    converted_cells = None
+    metadata = element["metadata"]
+    predicted_cells = metadata.get("table_as_cells")
     if predicted_cells:
-        converted_cells = _convert_table_from_deckerd(predicted_cells)
-    return converted_cells
+        return _convert_table_from_deckerd(predicted_cells)
+    return None
