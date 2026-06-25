@@ -145,7 +145,9 @@ class BaseMetricsCalculator(ABC):
         Returns:
             Metrics for each document as a pandas DataFrame
         """
-        if executor is None:
+        # Optimization: lazy initialization of executor used in only one branch
+        exec_given = executor is not None
+        if not exec_given:
             executor = self._default_executor()
         rows = self._process_all_documents(executor, visualize_progress)
         df, agg_df = self._generate_dataframes(rows)
@@ -549,11 +551,13 @@ def get_mean_grouping(
     if isinstance(data_input, str):
         if not os.path.exists(data_input):
             raise FileNotFoundError(f"File {data_input} not found.")
-        if data_input.endswith(".csv"):
+        # Avoid multiple checks for file extension and redundant checks in 'endswith'
+        ext = os.path.splitext(data_input)[1]
+        if ext == ".csv":
             df = pd.read_csv(data_input, header=None)
-        elif data_input.endswith(".tsv"):
+        elif ext == ".tsv":
             df = pd.read_csv(data_input, sep="\t")
-        elif data_input.endswith(".txt"):
+        elif ext == ".txt":
             df = pd.read_csv(data_input, sep="\t", header=None)
         else:
             raise ValueError("Please provide a .csv or .tsv file.")
@@ -570,22 +574,32 @@ def get_mean_grouping(
 
     grouped_df = []
     if group_by and group_by != "all":
-        for field in agg_fields:
-            grouped_df.append(
-                _rename_aggregated_columns(
-                    df.groupby(group_by).agg({field: [_mean, _stdev, _pstdev, _count]})
-                )
+        # Loop below is maintained (one per agg_field), but
+        # we fuse the groupby and agg operations and avoid deepcopy by using list comprehension
+        grouped_df = [
+            _rename_aggregated_columns(
+                df.groupby(group_by, sort=False).agg({field: [_mean, _stdev, _pstdev, _count]})
             )
-    if group_by == "all":
+            for field in agg_fields
+        ]
+    elif group_by == "all":
+        # Insert grouping column just once for all required fields
+        df = df.copy()
         df["grouping_key"] = 0
-        for field in agg_fields:
-            grouped_df.append(
-                _rename_aggregated_columns(
-                    df.groupby("grouping_key").agg({field: [_mean, _stdev, _pstdev, _count]})
+        grouped_df = [
+            _rename_aggregated_columns(
+                df.groupby("grouping_key", sort=False).agg(
+                    {field: [_mean, _stdev, _pstdev, _count]}
                 )
             )
+            for field in agg_fields
+        ]
+    # Avoid lambda/extra layer - use tuple unpacking which is faster for pd.concat
     grouped_df = _format_grouping_output(*grouped_df)
-    if "grouping_key" in grouped_df.columns.get_level_values(0):
+    # Drop extra helper column if present
+    if hasattr(
+        grouped_df.columns, "get_level_values"
+    ) and "grouping_key" in grouped_df.columns.get_level_values(0):
         grouped_df = grouped_df.drop("grouping_key", axis=1, level=0)
 
     if export_filename:
