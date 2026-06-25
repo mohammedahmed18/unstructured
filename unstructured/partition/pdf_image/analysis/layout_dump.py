@@ -19,6 +19,13 @@ from unstructured.documents.elements import Element, Text
 from unstructured.partition.pdf_image.analysis.processor import AnalysisProcessor
 from unstructured.partition.utils.sorting import coordinates_to_bbox
 
+# Cache class lists for each model type to avoid reconstructing them repeatedly
+_YOLOX_CLASSES: List[str] = list(YOLOX_LABEL_MAP.values())
+_DETECTRON_CLASSES: List[str] = list(DETECTRON_LABEL_MAP.values())
+
+# Cache model type results based on model_name to avoid repeated expensive get_model calls
+_model_type_cache: dict = {}
+
 
 class LayoutDumper(ABC):
     layout_source: str = "unknown"
@@ -51,11 +58,23 @@ def extract_document_layout_info(layout: DocumentLayout) -> dict:
 
 
 def object_detection_classes(model_name) -> List[str]:
-    model = get_model(model_name)
-    if isinstance(model, UnstructuredYoloXModel):
-        return list(YOLOX_LABEL_MAP.values())
-    if isinstance(model, UnstructuredDetectronONNXModel):
-        return list(DETECTRON_LABEL_MAP.values())
+    # Micro-optimized model type caching for model_name argument
+    model_type = _model_type_cache.get(model_name)
+    if model_type is None:
+        model = get_model(model_name)
+        # No isinstance checks if we've seen this before
+        if isinstance(model, UnstructuredYoloXModel):
+            model_type = "yolox"
+        elif isinstance(model, UnstructuredDetectronONNXModel):
+            model_type = "detectron"
+        else:
+            model_type = "unknown"
+        _model_type_cache[model_name] = model_type
+
+    if model_type == "yolox":
+        return _YOLOX_CLASSES
+    if model_type == "detectron":
+        return _DETECTRON_CLASSES
     else:
         raise ValueError(f"Cannot get OD model classes - unknown model type: {model_name}")
 
