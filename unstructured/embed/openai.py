@@ -35,7 +35,10 @@ class OpenAIEmbeddingEncoder(BaseEmbeddingEncoder):
     config: OpenAIEmbeddingConfig
 
     def get_exemplary_embedding(self) -> List[float]:
-        return self.embed_query(query="Q")
+        # Cache the client to avoid creating a new client on every invocation
+        if not hasattr(self, "_cached_client"):
+            self._cached_client = self.config.get_client()
+        return self._cached_client.embed_query("Q")
 
     def initialize(self):
         pass
@@ -49,8 +52,10 @@ class OpenAIEmbeddingEncoder(BaseEmbeddingEncoder):
         return np.isclose(np.linalg.norm(exemplary_embedding), 1.0)
 
     def embed_query(self, query):
-        client = self.config.get_client()
-        return client.embed_query(str(query))
+        # Cache the client for repeated queries to reduce overhead
+        if not hasattr(self, "_cached_client"):
+            self._cached_client = self.config.get_client()
+        return self._cached_client.embed_query(str(query))
 
     def embed_documents(self, elements: List[Element]) -> List[Element]:
         client = self.config.get_client()
