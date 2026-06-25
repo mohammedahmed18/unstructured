@@ -2,6 +2,7 @@ import json
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from pathlib import Path
+from threading import Lock
 from typing import List, Optional
 
 from unstructured_inference.inference.elements import ImageTextRegion, TextRegion
@@ -18,6 +19,10 @@ from unstructured_inference.models.yolox import YOLOX_LABEL_MAP, UnstructuredYol
 from unstructured.documents.elements import Element, Text
 from unstructured.partition.pdf_image.analysis.processor import AnalysisProcessor
 from unstructured.partition.utils.sorting import coordinates_to_bbox
+
+_od_classes_cache = {}
+
+_od_classes_lock = Lock()
 
 
 class LayoutDumper(ABC):
@@ -51,13 +56,26 @@ def extract_document_layout_info(layout: DocumentLayout) -> dict:
 
 
 def object_detection_classes(model_name) -> List[str]:
-    model = get_model(model_name)
-    if isinstance(model, UnstructuredYoloXModel):
-        return list(YOLOX_LABEL_MAP.values())
-    if isinstance(model, UnstructuredDetectronONNXModel):
-        return list(DETECTRON_LABEL_MAP.values())
-    else:
-        raise ValueError(f"Cannot get OD model classes - unknown model type: {model_name}")
+    # Thread-safe and safe for long-running processes, avoids repeated get_model calls.
+    try:
+        # Fast path: cache hit.
+        return _od_classes_cache[model_name]
+    except KeyError:
+        pass
+    # Compute and cache.
+    with _od_classes_lock:
+        if model_name in _od_classes_cache:
+            return _od_classes_cache[model_name]
+        model = get_model(model_name)
+        # These label lists are immutable, so we can cache them as-is.
+        if isinstance(model, UnstructuredYoloXModel):
+            result = list(YOLOX_LABEL_MAP.values())
+        elif isinstance(model, UnstructuredDetectronONNXModel):
+            result = list(DETECTRON_LABEL_MAP.values())
+        else:
+            raise ValueError(f"Cannot get OD model classes - unknown model type: {model_name}")
+        _od_classes_cache[model_name] = result
+        return result
 
 
 class ObjectDetectionLayoutDumper(LayoutDumper):
@@ -72,9 +90,11 @@ class ObjectDetectionLayoutDumper(LayoutDumper):
     def dump(self) -> dict:
         """Transforms the results to COCO format and saves them to a file"""
         try:
-            classes_dict = {"object_detection_classes": object_detection_classes(self.model_name)}
+            od_classes = object_detection_classes(self.model_name)
         except ValueError:
             classes_dict = {"object_detection_classes": []}
+        else:
+            classes_dict = {"object_detection_classes": od_classes}
         self.layout.update(classes_dict)
         return self.layout
 
